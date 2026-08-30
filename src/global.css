@@ -1,9 +1,84 @@
-:root {
-  --font-display:
-    Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
-    Segoe UI Symbol, Noto Color Emoji;
-  --font-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
-  --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
-  --font-serif: Georgia, 'Times New Roman', serif;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css";
+@import "nativewind/theme";
+@import "./theme/tokens.css";
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+}
+
+@layer components {
+  .layout--screen {
+    flex: 1;
+    background-color: var(--color-background);
+    padding-inline: var(--spacing-md);
+  }
+
+  .surface--card {
+    border-width: 1px;
+    border-color: var(--color-border);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-background);
+    padding: var(--spacing-md);
+    box-shadow: var(--shadow-card);
+  }
+
+  .typography--h1 {
+    color: var(--color-content-primary);
+    font-family: var(--font-poppins-bold);
+    font-size: var(--text-h1);
+    line-height: var(--text-h1--line-height);
+  }
+
+  .typography--h2 {
+    color: var(--color-content-primary);
+    font-family: var(--font-poppins-semibold);
+    font-size: var(--text-h2);
+    line-height: var(--text-h2--line-height);
+  }
+
+  .typography--h3 {
+    color: var(--color-content-primary);
+    font-family: var(--font-poppins-semibold);
+    font-size: var(--text-h3);
+    line-height: var(--text-h3--line-height);
+  }
+
+  .typography--h4 {
+    color: var(--color-content-primary);
+    font-family: var(--font-poppins-medium);
+    font-size: var(--text-h4);
+    line-height: var(--text-h4--line-height);
+  }
+
+  .typography--body-large {
+    color: var(--color-content-primary);
+    font-family: var(--font-poppins);
+    font-size: var(--text-body-large);
+    line-height: var(--text-body-large--line-height);
+  }
+
+  .typography--body-medium {
+    color: var(--color-content-primary);
+    font-family: var(--font-poppins);
+    font-size: var(--text-body-medium);
+    line-height: var(--text-body-medium--line-height);
+  }
+
+  .typography--body-small {
+    color: var(--color-content-secondary);
+    font-family: var(--font-poppins);
+    font-size: var(--text-body-small);
+    line-height: var(--text-body-small--line-height);
+  }
+
+  .typography--caption {
+    color: var(--color-content-secondary);
+    font-family: var(--font-poppins);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+  }
 }
