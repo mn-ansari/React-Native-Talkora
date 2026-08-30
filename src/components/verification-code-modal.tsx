@@ -11,7 +11,7 @@ import { Text, TouchableOpacity, View } from "@/tw";
 type VerificationCodeModalProps = {
   email: string;
   onClose: () => void;
-  onComplete: () => void;
+  onVerify: (code: string) => boolean | Promise<boolean>;
 };
 
 const CODE_LENGTH = 6;
@@ -27,11 +27,14 @@ const CODE_LENGTH = 6;
 export function VerificationCodeModal({
   email,
   onClose,
-  onComplete,
+  onVerify,
 }: VerificationCodeModalProps) {
   const inputRef = useRef<TextInput>(null);
   const completedRef = useRef(false);
   const [code, setCode] = useState("");
+  const [verificationError, setVerificationError] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const interactionTask = InteractionManager.runAfterInteractions(() => {
@@ -49,13 +52,30 @@ export function VerificationCodeModal({
    * Handles verification code input, filters to digits only, and auto-completes when full.
    * @param value - The raw input value
    */
-  const handleCodeChange = (value: string) => {
+  const handleCodeChange = async (value: string) => {
     const digits = value.replace(/\D/g, "").slice(0, CODE_LENGTH);
     setCode(digits);
+    setVerificationError(null);
 
     if (digits.length === CODE_LENGTH && !completedRef.current) {
       completedRef.current = true;
-      onComplete();
+
+      try {
+        const isVerified = await onVerify(digits);
+
+        if (isVerified) {
+          return;
+        }
+
+        setCode("");
+        setVerificationError("That code is incorrect. Try 123456.");
+      } catch {
+        setCode("");
+        setVerificationError("We couldn't verify the code. Please try again.");
+      }
+
+      completedRef.current = false;
+      inputRef.current?.focus();
     }
   };
 
@@ -71,17 +91,20 @@ export function VerificationCodeModal({
         behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
       >
-        <TouchableOpacity
-          activeOpacity={1}
-          accessibilityRole="button"
-          accessibilityLabel="Close verification"
-          onPress={onClose}
-          className="flex-1 items-center justify-center bg-[#080D2F]/55 px-[22px]"
+        <View className="flex-1 items-center justify-center bg-[#080D2F]/55 px-[22px]"
         >
           <TouchableOpacity
+            accessible={false}
             activeOpacity={1}
-            accessibilityRole="none"
-            onPress={() => inputRef.current?.focus()}
+            importantForAccessibility="no"
+            onPress={onClose}
+            className="absolute inset-0"
+          />
+
+          <View
+            accessibilityViewIsModal
+            importantForAccessibility="yes"
+            onAccessibilityEscape={onClose}
             className="w-full max-w-[380px] items-center rounded-[30px] border border-white/80 bg-white px-[22px] pb-[26px] pt-[24px] shadow-overlay"
           >
             <View className="h-[60px] w-[60px] items-center justify-center rounded-full bg-[#F1ECFF]">
@@ -101,7 +124,13 @@ export function VerificationCodeModal({
             </Text>
 
             <View className="relative w-full pt-[22px]">
-              <View pointerEvents="none" className="flex-row gap-[7px]">
+              <View
+                accessible={false}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                pointerEvents="none"
+                className="flex-row gap-[7px]"
+              >
                 {Array.from({ length: CODE_LENGTH }).map((_, index) => {
                   const digit = code[index];
                   const isActive =
@@ -127,6 +156,10 @@ export function VerificationCodeModal({
               <TextInput
                 ref={inputRef}
                 accessibilityLabel="Six digit verification code"
+                accessibilityHint="Double tap to open the number keyboard and enter the code"
+                accessibilityValue={{
+                  text: `${code.length} of ${CODE_LENGTH} digits entered`,
+                }}
                 autoFocus
                 caretHidden
                 contextMenuHidden
@@ -138,6 +171,7 @@ export function VerificationCodeModal({
                 showSoftInputOnFocus
                 textContentType="oneTimeCode"
                 value={code}
+                importantForAccessibility="yes"
                 style={{
                   backgroundColor: "transparent",
                   color: "transparent",
@@ -154,11 +188,23 @@ export function VerificationCodeModal({
               />
             </View>
 
-            <Text className="pt-[18px] text-center font-poppins text-[12px] leading-[18px] text-[#8A8FAC]">
-              Entering the last digit will continue automatically.
+            {verificationError ? (
+              <Text
+                accessibilityLiveRegion="assertive"
+                className="pt-[12px] text-center font-poppins-medium text-[12px] leading-[18px] text-error"
+              >
+                {verificationError}
+              </Text>
+            ) : null}
+
+            <Text
+              selectable
+              className="pt-[12px] text-center font-poppins text-[12px] leading-[18px] text-[#8A8FAC]"
+            >
+              Demo code: 123456. You’ll continue after it is verified.
             </Text>
-          </TouchableOpacity>
-        </TouchableOpacity>
+          </View>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );

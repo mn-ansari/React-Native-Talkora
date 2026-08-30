@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { useState } from "react";
-import { ScrollView, TextInput } from "react-native";
+import { useRef, useState } from "react";
+import { Alert, ScrollView, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { images } from "@/constants/images";
@@ -16,13 +16,16 @@ type AuthScreenProps = {
 };
 
 const socialProviders = ["Google", "Facebook", "Apple"] as const;
+const DEMO_VERIFICATION_CODE = "123456";
 
 /**
  * Renders a social provider icon/logo mark.
  * @param provider - The social provider name (Google, Facebook, or Apple)
  * @returns A styled icon representing the social provider
  */
-function SocialMark({ provider }: { provider: (typeof socialProviders)[number] }) {
+type SocialProvider = (typeof socialProviders)[number];
+
+function SocialMark({ provider }: { provider: SocialProvider }) {
   if (provider === "Facebook") {
     return (
       <View className="h-7 w-7 items-center justify-end rounded-full bg-[#1877F2]">
@@ -61,7 +64,9 @@ function SocialMark({ provider }: { provider: (typeof socialProviders)[number] }
  * @returns The authentication screen component
  */
 export function AuthScreen({ mode }: AuthScreenProps) {
+  const passwordInputRef = useRef<TextInput>(null);
   const [email, setEmail] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
   const [isVerificationVisible, setIsVerificationVisible] = useState(false);
   const [isPasswordHidden, setIsPasswordHidden] = useState(true);
   const [password, setPassword] = useState("");
@@ -74,12 +79,43 @@ export function AuthScreen({ mode }: AuthScreenProps) {
   const actionLabel = isSignUp ? "Sign Up" : "Sign In";
 
   const openVerification = () => {
+    const normalizedEmail = email.trim();
+
+    if (!normalizedEmail) {
+      setFormError("Enter your email address to continue.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setFormError("Enter a valid email address.");
+      return;
+    }
+
+    if (isSignUp && password.length < 8) {
+      setFormError("Password must be at least 8 characters.");
+      return;
+    }
+
+    setEmail(normalizedEmail);
+    setFormError(null);
     setIsVerificationVisible(true);
   };
 
-  const completeVerification = () => {
+  const verifyCode = (code: string) => {
+    if (code !== DEMO_VERIFICATION_CODE) {
+      return false;
+    }
+
     setIsVerificationVisible(false);
     router.replace("/");
+    return true;
+  };
+
+  const handleSocialAuth = (provider: SocialProvider) => {
+    Alert.alert(
+      `${provider} authentication`,
+      `${provider} authentication is not connected yet. Configure Clerk to enable this provider.`,
+    );
   };
 
   return (
@@ -145,11 +181,21 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                 autoCapitalize="none"
                 autoComplete="email"
                 keyboardType="email-address"
-                onChangeText={setEmail}
-                onSubmitEditing={openVerification}
+                onChangeText={(value) => {
+                  setEmail(value);
+                  setFormError(null);
+                }}
+                onSubmitEditing={() => {
+                  if (isSignUp) {
+                    passwordInputRef.current?.focus();
+                    return;
+                  }
+
+                  openVerification();
+                }}
                 placeholder="alex@gmail.com"
                 placeholderTextColor="#131A47"
-                returnKeyType="done"
+                returnKeyType={isSignUp ? "next" : "done"}
                 style={{
                   color: "#081044",
                   fontFamily: "Poppins-Regular",
@@ -176,9 +222,13 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                   Password
                 </Text>
                 <TextInput
+                  ref={passwordInputRef}
                   autoCapitalize="none"
                   autoComplete="new-password"
-                  onChangeText={setPassword}
+                  onChangeText={(value) => {
+                    setPassword(value);
+                    setFormError(null);
+                  }}
                   onSubmitEditing={openVerification}
                   placeholder="••••••••"
                   placeholderTextColor="#131A47"
@@ -209,6 +259,15 @@ export function AuthScreen({ mode }: AuthScreenProps) {
             </View>
           ) : null}
 
+          {formError ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              className="px-[4px] pt-[7px] font-poppins text-[12px] leading-[18px] text-error"
+            >
+              {formError}
+            </Text>
+          ) : null}
+
           <TouchableOpacity
             activeOpacity={0.86}
             accessibilityRole="button"
@@ -236,6 +295,7 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                 activeOpacity={0.78}
                 accessibilityRole="button"
                 accessibilityLabel={`Continue with ${provider}`}
+                onPress={() => handleSocialAuth(provider)}
                 className="h-[53px] flex-row items-center rounded-[16px] border border-[#E2E3EE] bg-white px-[16px] shadow-card"
               >
                 <View className="w-[38px] items-center">
@@ -271,7 +331,7 @@ export function AuthScreen({ mode }: AuthScreenProps) {
         <VerificationCodeModal
           email={email}
           onClose={() => setIsVerificationVisible(false)}
-          onComplete={completeVerification}
+          onVerify={verifyCode}
         />
       ) : null}
     </SafeAreaView>
