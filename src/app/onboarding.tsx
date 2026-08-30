@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { router } from "expo-router";
 import { Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -167,6 +168,7 @@ export default function OnboardingScreen() {
             activeOpacity={0.86}
             accessibilityRole="button"
             accessibilityLabel="Get started"
+            onPress={() => router.push("/sign-up")}
             className="h-[58px] flex-row items-center justify-center rounded-full bg-linear-to-r from-[#942BFF] via-[#7337F8] to-[#5138F2] shadow-overlay"
           >
             <Text className="font-poppins-semibold text-[19px] leading-[24px] text-white">
