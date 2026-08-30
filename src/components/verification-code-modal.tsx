@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   InteractionManager,
   KeyboardAvoidingView,
   Modal,
@@ -59,6 +60,7 @@ export function VerificationCodeModal({
 
     if (digits.length === CODE_LENGTH && !completedRef.current) {
       completedRef.current = true;
+      let errorMessage: string;
 
       try {
         const isVerified = await onVerify(digits);
@@ -67,15 +69,19 @@ export function VerificationCodeModal({
           return;
         }
 
-        setCode("");
-        setVerificationError("That code is incorrect. Try 123456.");
+        errorMessage = "That code is incorrect. Try 123456.";
       } catch {
-        setCode("");
-        setVerificationError("We couldn't verify the code. Please try again.");
+        errorMessage = "We couldn't verify the code. Please try again.";
       }
 
+      setCode("");
+      setVerificationError(errorMessage);
       completedRef.current = false;
       inputRef.current?.focus();
+
+      if (process.env.EXPO_OS === "ios") {
+        AccessibilityInfo.announceForAccessibility(errorMessage);
+      }
     }
   };
 
