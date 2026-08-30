@@ -11,6 +11,11 @@ import "../global.css";
 
 void SplashScreen.preventAutoHideAsync();
 
+/**
+ * Root layout component that handles font loading and app initialization.
+ * Manages splash screen visibility and provides the navigation stack.
+ * @returns The root Stack navigator or null while loading fonts
+ */
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 

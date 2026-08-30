@@ -16,6 +16,14 @@ type VerificationCodeModalProps = {
 
 const CODE_LENGTH = 6;
 
+/**
+ * A modal that prompts users to enter a 6-digit email verification code.
+ * Automatically completes when all digits are entered.
+ * @param email - The email address where the code was sent
+ * @param onClose - Callback when the modal should close
+ * @param onComplete - Callback when verification is complete
+ * @returns A modal component with a 6-digit code input
+ */
 export function VerificationCodeModal({
   email,
   onClose,
@@ -37,6 +45,10 @@ export function VerificationCodeModal({
     };
   }, []);
 
+  /**
+   * Handles verification code input, filters to digits only, and auto-completes when full.
+   * @param value - The raw input value
+   */
   const handleCodeChange = (value: string) => {
     const digits = value.replace(/\D/g, "").slice(0, CODE_LENGTH);
     setCode(digits);

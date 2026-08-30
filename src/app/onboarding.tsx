@@ -28,6 +28,11 @@ const feedbackWaveformBarClasses = [
   "h-[5px]",
 ] as const;
 
+/**
+ * Onboarding screen that introduces users to Talkora's features.
+ * Displays app branding, feature cards, and a call-to-action to sign up.
+ * @returns The onboarding screen component
+ */
 export default function OnboardingScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F9F9FF" }}>

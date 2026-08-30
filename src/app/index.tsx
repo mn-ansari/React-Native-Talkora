@@ -3,6 +3,10 @@ import { TouchableOpacity, View } from "react-native";
 
 import { AppText } from "@/components/app-text";
 
+/**
+ * Landing screen that displays the app name and a link to onboarding.
+ * @returns The index/landing screen component
+ */
 export default function Index() {
   return (
     <View className="layout--screen items-center justify-center gap-sm">

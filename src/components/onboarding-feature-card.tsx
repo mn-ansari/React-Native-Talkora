@@ -15,6 +15,11 @@ const waveformBarClasses = [
   "h-[8px]",
 ] as const;
 
+/**
+ * Renders the icon graphic for a feature card.
+ * @param icon - The type of icon to render (waveform, calendar, or lightning)
+ * @returns A styled icon graphic component
+ */
 function FeatureIconGraphic({ icon }: { icon: FeatureIcon }) {
   if (icon === "waveform") {
     return (
@@ -46,6 +51,12 @@ function FeatureIconGraphic({ icon }: { icon: FeatureIcon }) {
   );
 }
 
+/**
+ * A card component that displays a feature icon and label on the onboarding screen.
+ * @param icon - The icon type to display
+ * @param label - The text label describing the feature
+ * @returns A styled feature card component
+ */
 export function OnboardingFeatureCard({
   icon,
   label,

@@ -17,6 +17,11 @@ type AuthScreenProps = {
 
 const socialProviders = ["Google", "Facebook", "Apple"] as const;
 
+/**
+ * Renders a social provider icon/logo mark.
+ * @param provider - The social provider name (Google, Facebook, or Apple)
+ * @returns A styled icon representing the social provider
+ */
 function SocialMark({ provider }: { provider: (typeof socialProviders)[number] }) {
   if (provider === "Facebook") {
     return (
@@ -49,6 +54,12 @@ function SocialMark({ provider }: { provider: (typeof socialProviders)[number] }
   );
 }
 
+/**
+ * Authentication screen that handles both sign-in and sign-up flows.
+ * Includes email/password fields, social provider options, and email verification.
+ * @param mode - Whether to render sign-in or sign-up UI
+ * @returns The authentication screen component
+ */
 export function AuthScreen({ mode }: AuthScreenProps) {
   const [email, setEmail] = useState("");
   const [isVerificationVisible, setIsVerificationVisible] = useState(false);

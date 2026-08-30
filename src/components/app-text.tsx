@@ -18,6 +18,13 @@ type AppTextProps = TextProps & {
   className?: string;
 };
 
+/**
+ * A typography-aware Text component that applies predefined typography variants.
+ * @param variant - The typography variant to apply (default: "bodyMedium")
+ * @param className - Additional Tailwind classes to apply
+ * @param props - Standard React Native Text props
+ * @returns A styled Text component with the specified typography variant
+ */
 export function AppText({
   variant = "bodyMedium",
   className,
