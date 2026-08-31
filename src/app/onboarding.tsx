@@ -1,5 +1,6 @@
+import { useAuth } from "@clerk/expo";
 import { StatusBar } from "expo-status-bar";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -28,7 +29,22 @@ const feedbackWaveformBarClasses = [
   "h-[5px]",
 ] as const;
 
+/**
+ * Onboarding screen that introduces users to Talkora's features.
+ * Displays app branding, feature cards, and a call-to-action to sign up.
+ * @returns The onboarding screen component
+ */
 export default function OnboardingScreen() {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (isSignedIn) {
+    return <Redirect href="/" />;
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F9F9FF" }}>
       <StatusBar style="dark" />

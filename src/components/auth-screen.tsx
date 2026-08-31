@@ -1,10 +1,19 @@
+import {
+  isClerkAPIResponseError,
+  useAuth,
+  useSignIn,
+  useSignUp,
+} from "@clerk/expo";
+import { useSSO } from "@clerk/expo/experimental";
+import * as AuthSession from "expo-auth-session";
 import { Image } from "expo-image";
-import { router } from "expo-router";
-import { useState } from "react";
-import { ScrollView, TextInput } from "react-native";
+import { type Href, Redirect, router } from "expo-router";
+import { useRef, useState } from "react";
+import { Platform, ScrollView, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { images } from "@/constants/images";
+import { beginBrowserSSO, completeBrowserSSO } from "@/lib/sso-flow";
 import { Text, TouchableOpacity, View } from "@/tw";
 
 import { VerificationCodeModal } from "./verification-code-modal";
@@ -17,7 +26,36 @@ type AuthScreenProps = {
 
 const socialProviders = ["Google", "Facebook", "Apple"] as const;
 
-function SocialMark({ provider }: { provider: (typeof socialProviders)[number] }) {
+/**
+ * Renders a social provider icon/logo mark.
+ * @param provider - The social provider name (Google, Facebook, or Apple)
+ * @returns A styled icon representing the social provider
+ */
+type SocialProvider = (typeof socialProviders)[number];
+type VerificationStage = "sign-in" | "sign-in-mfa" | "sign-up";
+
+const socialStrategies: Partial<Record<SocialProvider, "oauth_google">> = {
+  Google: "oauth_google",
+};
+
+const ssoRedirectUrl = AuthSession.makeRedirectUri({
+  path: "sso-callback",
+  scheme: "duallango",
+});
+
+function getClerkErrorMessage(error: unknown, fallback: string) {
+  if (isClerkAPIResponseError(error)) {
+    return error.errors[0]?.longMessage ?? error.errors[0]?.message ?? fallback;
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
+function SocialMark({ provider }: { provider: SocialProvider }) {
   if (provider === "Facebook") {
     return (
       <View className="h-7 w-7 items-center justify-end rounded-full bg-[#1877F2]">
@@ -49,12 +87,30 @@ function SocialMark({ provider }: { provider: (typeof socialProviders)[number] }
   );
 }
 
+/**
+ * Authentication screen that handles both sign-in and sign-up flows.
+ * Includes email/password fields, social provider options, and email verification.
+ * @param mode - Whether to render sign-in or sign-up UI
+ * @returns The authentication screen component
+ */
 export function AuthScreen({ mode }: AuthScreenProps) {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { fetchStatus: signInFetchStatus, signIn } = useSignIn();
+  const { fetchStatus: signUpFetchStatus, signUp } = useSignUp();
+  const { startSSOFlow } = useSSO();
+  const passwordInputRef = useRef<TextInput>(null);
   const [email, setEmail] = useState("");
-  const [isVerificationVisible, setIsVerificationVisible] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [isPasswordHidden, setIsPasswordHidden] = useState(true);
+  const [isSocialLoading, setIsSocialLoading] = useState(false);
   const [password, setPassword] = useState("");
+  const [verificationStage, setVerificationStage] =
+    useState<VerificationStage | null>(null);
   const isSignUp = mode === "sign-up";
+  const isSubmitting =
+    signInFetchStatus === "fetching" ||
+    signUpFetchStatus === "fetching" ||
+    isSocialLoading;
 
   const title = isSignUp ? "Create your account" : "Welcome back";
   const subtitle = isSignUp
@@ -62,14 +118,282 @@ export function AuthScreen({ mode }: AuthScreenProps) {
     : "Continue your language journey ✨";
   const actionLabel = isSignUp ? "Sign Up" : "Sign In";
 
-  const openVerification = () => {
-    setIsVerificationVisible(true);
+  const navigateAfterAuth = ({
+    session,
+    decorateUrl,
+  }: Parameters<
+    NonNullable<
+      NonNullable<Parameters<typeof signIn.finalize>[0]>["navigate"]
+    >
+  >[0]) => {
+    if (session?.currentTask) {
+      setVerificationStage(null);
+      setFormError("Your account needs an additional security step in Clerk.");
+      return;
+    }
+
+    setVerificationStage(null);
+    const destination = decorateUrl("/");
+
+    if (destination.startsWith("http")) {
+      if (Platform.OS === "web") {
+        window.location.assign(destination);
+      }
+      return;
+    }
+
+    router.replace(destination as Href);
   };
 
-  const completeVerification = () => {
-    setIsVerificationVisible(false);
-    router.replace("/");
+  const finalizeSignIn = async (): Promise<true | string> => {
+    if (signIn.status !== "complete") {
+      return "Clerk needs another verification step before signing you in.";
+    }
+
+    const { error } = await signIn.finalize({ navigate: navigateAfterAuth });
+
+    if (error) {
+      return getClerkErrorMessage(error, "We couldn't finish signing you in.");
+    }
+
+    return true;
   };
+
+  const finalizeSignUp = async (): Promise<true | string> => {
+    if (signUp.status !== "complete") {
+      return "Clerk needs more account information before finishing sign up.";
+    }
+
+    const { error } = await signUp.finalize({ navigate: navigateAfterAuth });
+
+    if (error) {
+      return getClerkErrorMessage(error, "We couldn't finish creating your account.");
+    }
+
+    return true;
+  };
+
+  const handleEmailSubmit = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    const normalizedEmail = email.trim();
+
+    if (!normalizedEmail) {
+      setFormError("Enter your email address to continue.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setFormError("Enter a valid email address.");
+      return;
+    }
+
+    if (isSignUp && password.length < 8) {
+      setFormError("Password must be at least 8 characters.");
+      return;
+    }
+
+    setEmail(normalizedEmail);
+    setFormError(null);
+
+    try {
+      if (isSignUp) {
+        const { error } = await signUp.password({
+          emailAddress: normalizedEmail,
+          password,
+        });
+
+        if (error) {
+          setFormError(
+            getClerkErrorMessage(error, "We couldn't create your account."),
+          );
+          return;
+        }
+
+        const { error: sendError } =
+          await signUp.verifications.sendEmailCode();
+
+        if (sendError) {
+          setFormError(
+            getClerkErrorMessage(
+              sendError,
+              "We couldn't send your verification code.",
+            ),
+          );
+          return;
+        }
+
+        setVerificationStage("sign-up");
+        return;
+      }
+
+      const { error } = await signIn.emailCode.sendCode({
+        emailAddress: normalizedEmail,
+      });
+
+      if (error) {
+        setFormError(
+          getClerkErrorMessage(error, "We couldn't send your sign-in code."),
+        );
+        return;
+      }
+
+      setVerificationStage("sign-in");
+    } catch (error) {
+      setFormError(
+        getClerkErrorMessage(error, "Authentication is unavailable right now."),
+      );
+    }
+  };
+
+  const verifyCode = async (code: string): Promise<true | string> => {
+    if (verificationStage === "sign-up") {
+      const { error } = await signUp.verifications.verifyEmailCode({ code });
+
+      if (error) {
+        return getClerkErrorMessage(error, "That verification code is incorrect.");
+      }
+
+      return finalizeSignUp();
+    }
+
+    if (verificationStage === "sign-in-mfa") {
+      const { error } = await signIn.mfa.verifyEmailCode({ code });
+
+      if (error) {
+        return getClerkErrorMessage(error, "That verification code is incorrect.");
+      }
+
+      return finalizeSignIn();
+    }
+
+    const { error } = await signIn.emailCode.verifyCode({ code });
+
+    if (error) {
+      return getClerkErrorMessage(error, "That verification code is incorrect.");
+    }
+
+    if (signIn.status === "complete") {
+      return finalizeSignIn();
+    }
+
+    if (
+      signIn.status === "needs_second_factor" ||
+      signIn.status === "needs_client_trust"
+    ) {
+      const supportsEmailCode = signIn.supportedSecondFactors.some(
+        (factor) => factor.strategy === "email_code",
+      );
+
+      if (supportsEmailCode) {
+        const { error: sendError } = await signIn.mfa.sendEmailCode();
+
+        if (sendError) {
+          return getClerkErrorMessage(
+            sendError,
+            "We couldn't send the additional verification code.",
+          );
+        }
+
+        setVerificationStage("sign-in-mfa");
+        return true;
+      }
+
+      return "This account needs another verification method that isn't available on this screen.";
+    }
+
+    return "Clerk needs another verification step before signing you in.";
+  };
+
+  const resendCode = async () => {
+    let error: unknown = null;
+
+    if (verificationStage === "sign-up") {
+      ({ error } = await signUp.verifications.sendEmailCode());
+    } else if (verificationStage === "sign-in-mfa") {
+      ({ error } = await signIn.mfa.sendEmailCode());
+    } else {
+      ({ error } = await signIn.emailCode.sendCode());
+    }
+
+    return error
+      ? getClerkErrorMessage(error, "We couldn't resend the code.")
+      : null;
+  };
+
+  const closeVerification = () => {
+    if (verificationStage === "sign-up") {
+      signUp.reset();
+    } else {
+      signIn.reset();
+    }
+
+    setVerificationStage(null);
+  };
+
+  const handleSocialAuth = async (provider: SocialProvider) => {
+    if (isSubmitting) {
+      return;
+    }
+
+    setFormError(null);
+    const strategy = socialStrategies[provider];
+
+    if (!strategy) {
+      setFormError(`${provider} sign in isn't enabled in Clerk yet.`);
+      return;
+    }
+
+    setIsSocialLoading(true);
+    beginBrowserSSO();
+
+    try {
+      const { authSessionResult, createdSessionId, signUp: socialSignUp } =
+        await startSSOFlow({
+          redirectUrl: ssoRedirectUrl,
+          strategy,
+        });
+
+      if (socialSignUp?.status === "missing_requirements") {
+        const missingFields = socialSignUp.missingFields
+          .map((field) => field.replaceAll("_", " "))
+          .join(", ");
+        const message = missingFields
+          ? `${provider} sign in still needs: ${missingFields}.`
+          : `${provider} sign in needs additional profile information in Clerk.`;
+        completeBrowserSSO("error", message);
+        setFormError(message);
+        return;
+      }
+
+      if (createdSessionId || authSessionResult?.type === "success") {
+        completeBrowserSSO("success");
+        router.replace("/");
+        return;
+      }
+
+      completeBrowserSSO("cancelled");
+    } catch (error) {
+      const message = getClerkErrorMessage(
+        error,
+        `${provider} authentication couldn't be completed.`,
+      );
+      completeBrowserSSO("error", message);
+      setFormError(message);
+    } finally {
+      setIsSocialLoading(false);
+    }
+  };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (isSignedIn) {
+    return <Redirect href="/" />;
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FCFCFF" }}>
@@ -134,11 +458,21 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                 autoCapitalize="none"
                 autoComplete="email"
                 keyboardType="email-address"
-                onChangeText={setEmail}
-                onSubmitEditing={openVerification}
+                onChangeText={(value) => {
+                  setEmail(value);
+                  setFormError(null);
+                }}
+                onSubmitEditing={() => {
+                  if (isSignUp) {
+                    passwordInputRef.current?.focus();
+                    return;
+                  }
+
+                  void handleEmailSubmit();
+                }}
                 placeholder="alex@gmail.com"
                 placeholderTextColor="#131A47"
-                returnKeyType="done"
+                returnKeyType={isSignUp ? "next" : "done"}
                 style={{
                   color: "#081044",
                   fontFamily: "Poppins-Regular",
@@ -165,10 +499,14 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                   Password
                 </Text>
                 <TextInput
+                  ref={passwordInputRef}
                   autoCapitalize="none"
                   autoComplete="new-password"
-                  onChangeText={setPassword}
-                  onSubmitEditing={openVerification}
+                  onChangeText={(value) => {
+                    setPassword(value);
+                    setFormError(null);
+                  }}
+                  onSubmitEditing={() => void handleEmailSubmit()}
                   placeholder="••••••••"
                   placeholderTextColor="#131A47"
                   returnKeyType="done"
@@ -198,11 +536,21 @@ export function AuthScreen({ mode }: AuthScreenProps) {
             </View>
           ) : null}
 
+          {formError ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              className="px-[4px] pt-[7px] font-poppins text-[12px] leading-[18px] text-error"
+            >
+              {formError}
+            </Text>
+          ) : null}
+
           <TouchableOpacity
             activeOpacity={0.86}
             accessibilityRole="button"
             accessibilityLabel={actionLabel}
-            onPress={openVerification}
+            disabled={isSubmitting}
+            onPress={() => void handleEmailSubmit()}
             className="mt-[12px] h-[57px] items-center justify-center rounded-full bg-linear-to-r from-[#A33BFA] via-[#6F42F8] to-[#367DF7] shadow-overlay"
           >
             <Text className="font-poppins-semibold text-[19px] leading-[25px] text-white">
@@ -225,6 +573,8 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                 activeOpacity={0.78}
                 accessibilityRole="button"
                 accessibilityLabel={`Continue with ${provider}`}
+                disabled={isSubmitting}
+                onPress={() => void handleSocialAuth(provider)}
                 className="h-[53px] flex-row items-center rounded-[16px] border border-[#E2E3EE] bg-white px-[16px] shadow-card"
               >
                 <View className="w-[38px] items-center">
@@ -256,11 +606,13 @@ export function AuthScreen({ mode }: AuthScreenProps) {
         </View>
       </ScrollView>
 
-      {isVerificationVisible ? (
+      {verificationStage ? (
         <VerificationCodeModal
+          key={verificationStage}
           email={email}
-          onClose={() => setIsVerificationVisible(false)}
-          onComplete={completeVerification}
+          onClose={closeVerification}
+          onResend={resendCode}
+          onVerify={verifyCode}
         />
       ) : null}
     </SafeAreaView>
