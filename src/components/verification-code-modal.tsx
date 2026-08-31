@@ -12,7 +12,8 @@ import { Text, TouchableOpacity, View } from "@/tw";
 type VerificationCodeModalProps = {
   email: string;
   onClose: () => void;
-  onVerify: (code: string) => boolean | Promise<boolean>;
+  onResend: () => Promise<string | null>;
+  onVerify: (code: string) => Promise<true | string>;
 };
 
 const CODE_LENGTH = 6;
@@ -28,6 +29,7 @@ const CODE_LENGTH = 6;
 export function VerificationCodeModal({
   email,
   onClose,
+  onResend,
   onVerify,
 }: VerificationCodeModalProps) {
   const inputRef = useRef<TextInput>(null);
@@ -36,6 +38,7 @@ export function VerificationCodeModal({
   const [verificationError, setVerificationError] = useState<string | null>(
     null,
   );
+  const [isResending, setIsResending] = useState(false);
 
   useEffect(() => {
     const interactionTask = InteractionManager.runAfterInteractions(() => {
@@ -63,13 +66,13 @@ export function VerificationCodeModal({
       let errorMessage: string;
 
       try {
-        const isVerified = await onVerify(digits);
+        const result = await onVerify(digits);
 
-        if (isVerified) {
+        if (result === true) {
           return;
         }
 
-        errorMessage = "That code is incorrect. Try 123456.";
+        errorMessage = result;
       } catch {
         errorMessage = "We couldn't verify the code. Please try again.";
       }
@@ -82,6 +85,27 @@ export function VerificationCodeModal({
       if (process.env.EXPO_OS === "ios") {
         AccessibilityInfo.announceForAccessibility(errorMessage);
       }
+    }
+  };
+
+  const handleResend = async () => {
+    if (isResending) {
+      return;
+    }
+
+    setIsResending(true);
+    setVerificationError(null);
+
+    try {
+      const errorMessage = await onResend();
+
+      if (errorMessage) {
+        setVerificationError(errorMessage);
+      }
+    } catch {
+      setVerificationError("We couldn't resend the code. Please try again.");
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -203,12 +227,17 @@ export function VerificationCodeModal({
               </Text>
             ) : null}
 
-            <Text
-              selectable
-              className="pt-[12px] text-center font-poppins text-[12px] leading-[18px] text-[#8A8FAC]"
+            <TouchableOpacity
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              disabled={isResending}
+              onPress={handleResend}
+              className="pt-[12px]"
             >
-              Demo code: 123456. You’ll continue after it is verified.
-            </Text>
+              <Text className="text-center font-poppins text-[12px] leading-[18px] text-[#8A8FAC]">
+                {isResending ? "Sending a new code…" : "Didn't get a code? Send again"}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </KeyboardAvoidingView>
