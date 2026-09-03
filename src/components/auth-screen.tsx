@@ -4,8 +4,6 @@ import {
   useSignIn,
   useSignUp,
 } from "@clerk/expo";
-import { useSSO } from "@clerk/expo/experimental";
-import * as AuthSession from "expo-auth-session";
 import { Image } from "expo-image";
 import { type Href, Redirect, router } from "expo-router";
 import { useRef, useState } from "react";
@@ -13,9 +11,9 @@ import { Platform, ScrollView, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { images } from "@/constants/images";
-import { beginBrowserSSO, completeBrowserSSO } from "@/lib/sso-flow";
 import { Text, TouchableOpacity, View } from "@/tw";
 
+import { useClerkSSO } from "./clerk-sso-provider";
 import { VerificationCodeModal } from "./verification-code-modal";
 
 type AuthMode = "sign-in" | "sign-up";
@@ -37,11 +35,6 @@ type VerificationStage = "sign-in" | "sign-in-mfa" | "sign-up";
 const socialStrategies: Partial<Record<SocialProvider, "oauth_google">> = {
   Google: "oauth_google",
 };
-
-const ssoRedirectUrl = AuthSession.makeRedirectUri({
-  path: "sso-callback",
-  scheme: "duallango",
-});
 
 function getClerkErrorMessage(error: unknown, fallback: string) {
   if (isClerkAPIResponseError(error)) {
@@ -97,12 +90,11 @@ export function AuthScreen({ mode }: AuthScreenProps) {
   const { isLoaded, isSignedIn } = useAuth();
   const { fetchStatus: signInFetchStatus, signIn } = useSignIn();
   const { fetchStatus: signUpFetchStatus, signUp } = useSignUp();
-  const { startSSOFlow } = useSSO();
+  const { startGoogleSSO, status: googleSSOStatus } = useClerkSSO();
   const passwordInputRef = useRef<TextInput>(null);
   const [email, setEmail] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [isPasswordHidden, setIsPasswordHidden] = useState(true);
-  const [isSocialLoading, setIsSocialLoading] = useState(false);
   const [password, setPassword] = useState("");
   const [verificationStage, setVerificationStage] =
     useState<VerificationStage | null>(null);
@@ -110,7 +102,7 @@ export function AuthScreen({ mode }: AuthScreenProps) {
   const isSubmitting =
     signInFetchStatus === "fetching" ||
     signUpFetchStatus === "fetching" ||
-    isSocialLoading;
+    googleSSOStatus === "pending";
 
   const title = isSignUp ? "Create your account" : "Welcome back";
   const subtitle = isSignUp
@@ -346,44 +338,14 @@ export function AuthScreen({ mode }: AuthScreenProps) {
       return;
     }
 
-    setIsSocialLoading(true);
-    beginBrowserSSO();
+    const result = await startGoogleSSO();
 
-    try {
-      const { authSessionResult, createdSessionId, signUp: socialSignUp } =
-        await startSSOFlow({
-          redirectUrl: ssoRedirectUrl,
-          strategy,
-        });
-
-      if (socialSignUp?.status === "missing_requirements") {
-        const missingFields = socialSignUp.missingFields
-          .map((field) => field.replaceAll("_", " "))
-          .join(", ");
-        const message = missingFields
-          ? `${provider} sign in still needs: ${missingFields}.`
-          : `${provider} sign in needs additional profile information in Clerk.`;
-        completeBrowserSSO("error", message);
-        setFormError(message);
-        return;
-      }
-
-      if (createdSessionId || authSessionResult?.type === "success") {
-        completeBrowserSSO("success");
-        router.replace("/");
-        return;
-      }
-
-      completeBrowserSSO("cancelled");
-    } catch (error) {
-      const message = getClerkErrorMessage(
-        error,
-        `${provider} authentication couldn't be completed.`,
+    if (result.status === "error") {
+      setFormError(
+        result.errorMessage ?? `${provider} authentication couldn't be completed.`,
       );
-      completeBrowserSSO("error", message);
-      setFormError(message);
-    } finally {
-      setIsSocialLoading(false);
+    } else if (result.status === "success") {
+      router.replace("/");
     }
   };
 

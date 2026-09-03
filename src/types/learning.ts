@@ -1,4 +1,4 @@
-export type LanguageCode = "es" | "fr" | "ja";
+export type LanguageCode = "en" | "es" | "fr" | "ja";
 
 export type TextDirection = "ltr" | "rtl";
 

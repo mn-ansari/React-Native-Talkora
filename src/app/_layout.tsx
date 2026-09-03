@@ -9,6 +9,8 @@ import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
 
+import { ClerkSSOProvider } from "@/components/clerk-sso-provider";
+import { useLanguageStore } from "@/store/language-store";
 import { colors, fontAssets } from "@/theme";
 import { View } from "@/tw";
 import "../global.css";
@@ -35,14 +37,17 @@ type RootNavigatorProps = {
 
 function RootNavigator({ fontsReady }: RootNavigatorProps) {
   const { isLoaded: isAuthLoaded } = useAuth();
+  const hasLanguageStoreHydrated = useLanguageStore(
+    (state) => state.hasHydrated,
+  );
 
   useEffect(() => {
-    if (fontsReady && isAuthLoaded) {
+    if (fontsReady && isAuthLoaded && hasLanguageStoreHydrated) {
       void SplashScreen.hideAsync();
     }
-  }, [fontsReady, isAuthLoaded]);
+  }, [fontsReady, hasLanguageStoreHydrated, isAuthLoaded]);
 
-  if (!fontsReady || !isAuthLoaded) {
+  if (!fontsReady || !isAuthLoaded || !hasLanguageStoreHydrated) {
     return null;
   }
 
@@ -68,7 +73,9 @@ export default function RootLayout() {
 
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <RootNavigator fontsReady={fontsLoaded} />
+      <ClerkSSOProvider>
+        <RootNavigator fontsReady={fontsLoaded} />
+      </ClerkSSOProvider>
       <View nativeID="clerk-captcha" />
     </ClerkProvider>
   );

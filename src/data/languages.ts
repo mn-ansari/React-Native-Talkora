@@ -2,6 +2,15 @@ import type { SupportedLanguage } from "@/types/learning";
 
 export const languages: SupportedLanguage[] = [
   {
+    id: "english",
+    code: "en",
+    name: "English",
+    nativeName: "English",
+    locale: "en-US",
+    flag: "🇺🇸",
+    textDirection: "ltr",
+  },
+  {
     id: "spanish",
     code: "es",
     name: "Spanish",
