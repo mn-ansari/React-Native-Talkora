@@ -214,10 +214,16 @@ curl -s "https://api.clerk.com/v1${PATH}${QUERY_STRING}" \
 
 Template for POST/PATCH requests:
 ```bash
+# Provide the requested JSON through REQUEST_BODY_JSON; do not interpolate it into shell source.
+BODY_JSON="$(
+  printf '%s' "$REQUEST_BODY_JSON" |
+    python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)))'
+)"
+
 curl -s -X ${METHOD} "https://api.clerk.com/v1${PATH}" \
   -H "Authorization: Bearer $CLERK_SECRET_KEY" \
   -H "Content-Type: application/json" \
-  -d '${BODY_JSON}'
+  -d "$BODY_JSON"
 ```
 
 Template for DELETE requests:
