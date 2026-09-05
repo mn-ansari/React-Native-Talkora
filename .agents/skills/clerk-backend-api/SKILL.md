@@ -16,7 +16,7 @@ Before ANY POST / PATCH / PUT / DELETE, you MUST do ALL of the following in your
 
 1. **Check CLERK_SECRET_KEY** — verify it is set:
    ```bash
-   echo $CLERK_SECRET_KEY | head -c 10
+   test -n "${CLERK_SECRET_KEY:-}"
    ```
    If empty, stop and ask the user. Do not proceed without a valid key.
 
@@ -42,6 +42,7 @@ For the operations below, skip spec fetching and execute immediately using these
 # Step 1 — Create organization
 ORG=$(curl -s -X POST "https://api.clerk.com/v1/organizations" \
   -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION" \
   -H "Content-Type: application/json" \
   -d "{\"name\": \"Acme Corp\", \"created_by\": \"$USER_ID\"}")
 echo "$ORG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d, indent=2))"
@@ -52,6 +53,7 @@ ORG_ID=$(echo "$ORG" | python3 -c "import sys,json; print(json.load(sys.stdin)['
 # Step 3 — Invite member with role
 curl -s -X POST "https://api.clerk.com/v1/organizations/${ORG_ID}/invitations" \
   -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION" \
   -H "Content-Type: application/json" \
   -d "{\"email_address\": \"user@example.com\", \"role\": \"org:admin\"}" \
   | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin), indent=2))"
@@ -94,8 +96,9 @@ const invitation = await clerkClient.organizations.createOrganizationInvitation(
 **For `plan: 'pro'` and `onboarded: true` — use `public_metadata`** (frontend-readable, server-writable):
 
 ```bash
-curl -s -X PATCH "https://api.clerk.com/v1/users/${USER_ID}" \
+curl -s -X PATCH "https://api.clerk.com/v1/users/${USER_ID}/metadata" \
   -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION" \
   -H "Content-Type: application/json" \
   -d '{"public_metadata": {"plan": "pro", "onboarded": true}}' \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Updated user {d[\"id\"]}: public_metadata={d.get(\"public_metadata\")}')"
@@ -107,7 +110,7 @@ curl -s -X PATCH "https://api.clerk.com/v1/users/${USER_ID}" \
 import { clerkClient } from '@clerk/nextjs/server'
 // OR: import { createClerkClient } from '@clerk/backend'
 
-await clerkClient.users.updateUser(userId, {
+await clerkClient.users.updateUserMetadata(userId, {
   publicMetadata: { plan: 'pro', onboarded: true },   // readable by client, writable server-only
   // privateMetadata: { stripeId: 'cus_xxx' },         // server-only read AND write
   // unsafeMetadata: { step: 'welcome' },              // client-writable, avoid sensitive data
@@ -119,18 +122,30 @@ await clerkClient.users.updateUser(userId, {
 ### List users (last 7 days)
 
 ```bash
-curl -s "https://api.clerk.com/v1/users?limit=100&offset=0&order_by=-created_at&created_at=gt:$(date -d '7 days ago' +%s 2>/dev/null || date -v-7d +%s)000" \
-  -H "Authorization: Bearer $CLERK_SECRET_KEY" \
-  | python3 -c "
+CREATED_AT_AFTER_SECONDS=$(date -d '7 days ago' +%s 2>/dev/null || date -v-7d +%s)
+CREATED_AT_AFTER=$((CREATED_AT_AFTER_SECONDS * 1000))
+LIMIT=100
+OFFSET=0
+
+while true; do
+  RESPONSE=$(curl -s "https://api.clerk.com/v1/users?limit=${LIMIT}&offset=${OFFSET}&order_by=-created_at&created_at_after=${CREATED_AT_AFTER}" \
+    -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+    -H "Clerk-API-Version: $VERSION")
+
+  echo "$RESPONSE" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 if isinstance(data, list):
-    print(f'Found {len(data)} users:')
     for u in data:
-        print(f'  {u[\"id\"]}: {u.get(\"email_addresses\", [{}])[0].get(\"email_address\", \"no email\")}')
+        print(f'  {u[\"id\"]}: {(u.get(\"email_addresses\") or [{}])[0].get(\"email_address\", \"no email\")}')
 else:
     print(json.dumps(data, indent=2))
 "
+
+  PAGE_SIZE=$(echo "$RESPONSE" | python3 -c "import sys,json; data=json.load(sys.stdin); print(len(data) if isinstance(data, list) else 0)")
+  [ "$PAGE_SIZE" -lt "$LIMIT" ] && break
+  OFFSET=$((OFFSET + LIMIT))
+done
 ```
 
 ### Delete user (confirm required)
@@ -139,6 +154,7 @@ else:
 # ONLY run after explicit user confirmation
 curl -s -X DELETE "https://api.clerk.com/v1/users/${USER_ID}" \
   -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION" \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Deleted: {d}')"
 ```
 
@@ -154,8 +170,9 @@ Auth: `Authorization: Bearer $CLERK_SECRET_KEY` on every request.
 **List users**
 ```
 GET /v1/users
-Query params: limit (max 500, default 10), offset, order_by (+/-created_at, +/-updated_at, +/-email_address, +/-web3wallet, +/-first_name, +/-last_name, +/-phone_number, +/-username, +/-last_active_at, +/-last_sign_in_at), email_address[], phone_number[], username[], web3wallet[], user_id[], query, created_at (ISO 8601 range: gt:TIMESTAMP or lt:TIMESTAMP in Unix ms)
+Query params: limit (max 500, default 10), offset, order_by (+/-created_at, +/-updated_at, +/-email_address, +/-web3wallet, +/-first_name, +/-last_name, +/-phone_number, +/-username, +/-last_active_at, +/-last_sign_in_at), email_address[], phone_number[], username[], web3wallet[], user_id[], query, created_at_after (Unix timestamp in milliseconds)
 Returns: array of User objects
+Pagination: process each page, advance `offset` by `limit`, and continue until a page contains fewer than `limit` users.
 ```
 
 **Get user**
@@ -167,7 +184,14 @@ Returns: User object
 **Update user**
 ```
 PATCH /v1/users/{user_id}
-Body (JSON, snake_case): { public_metadata, private_metadata, unsafe_metadata, first_name, last_name, username, ... }
+Body (JSON, snake_case): { first_name, last_name, username, ... }
+```
+
+**Update or replace user metadata**
+```text
+PATCH /v1/users/{user_id}/metadata  # Deep-merges provided metadata
+PUT /v1/users/{user_id}/metadata    # Replaces each provided metadata field in full
+Body (JSON, snake_case): { public_metadata, private_metadata, unsafe_metadata }
 ```
 
 **Delete user — IRREVERSIBLE**
@@ -209,27 +233,24 @@ Returns: OrganizationInvitation object
 Template for GET requests:
 ```bash
 curl -s "https://api.clerk.com/v1${PATH}${QUERY_STRING}" \
-  -H "Authorization: Bearer $CLERK_SECRET_KEY"
+  -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION"
 ```
 
 Template for POST/PATCH requests:
 ```bash
-# Provide the requested JSON through REQUEST_BODY_JSON; do not interpolate it into shell source.
-BODY_JSON="$(
-  printf '%s' "$REQUEST_BODY_JSON" |
-    python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)))'
-)"
-
 curl -s -X ${METHOD} "https://api.clerk.com/v1${PATH}" \
   -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION" \
   -H "Content-Type: application/json" \
-  -d "$BODY_JSON"
+  -d '${BODY_JSON}'
 ```
 
 Template for DELETE requests:
 ```bash
 curl -s -X DELETE "https://api.clerk.com/v1${PATH}" \
-  -H "Authorization: Bearer $CLERK_SECRET_KEY"
+  -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION"
 ```
 
 **After getting the response:** Parse and display it clearly. Use `python3 -c "import sys,json; data=json.load(sys.stdin); print(json.dumps(data, indent=2))"` to pretty-print JSON. Extract key fields (id, email, name, etc.) and summarize them for the user.
@@ -257,7 +278,7 @@ Use the output to determine the latest version and available tags.
 - For DELETE operations, always warn the user that the action is **irreversible** and mention what data will be lost (user record, sessions, memberships). This warning is MANDATORY — never skip it.
 - For write operations (POST/PUT/PATCH/DELETE), check `CLERK_BAPI_SCOPES` before attempting the request. If missing or insufficient, ask the user upfront. Do NOT attempt and fail — ask before executing. This check is MANDATORY.
 - For metadata operations, always explain all three types (public, private, unsafe) and recommend the appropriate one.
-- Pagination: always use `limit` + `offset` and mention that results may be paginated for large datasets.
+- Pagination: always use `limit` + `offset`, process every page, and advance `offset` by `limit` until a page contains fewer than `limit` results. Do not require cursor pagination.
 - Use direct curl commands for all API calls — never use `scripts/execute-request.sh`.
 
 ---
@@ -279,23 +300,25 @@ Use the output to determine the latest version and available tags.
 
 `currentUser()` makes a real API call that counts against rate limits. Use `auth()` for just the session claims — it reads from the token without an API call.
 
-### Metadata Overwrites (Not Merges)
+### Metadata Updates and Replacements
 
-`updateUser({ publicMetadata: { role: 'admin' } })` REPLACES all public metadata, not merges. To add a field without losing existing data: read first, spread, then write.
+`updateUserMetadata()` deep-merges the provided metadata, so adding a field preserves existing fields. Its REST equivalent is `PATCH /v1/users/{user_id}/metadata`.
 
-Wrong:
+Deep-merge update:
 ```typescript
-await clerkClient.users.updateUser(userId, { publicMetadata: { newField: 'value' } })
-```
-This DELETES all other `publicMetadata` fields.
-
-Right:
-```typescript
-const user = await clerkClient.users.getUser(userId)
-await clerkClient.users.updateUser(userId, {
-  publicMetadata: { ...user.publicMetadata, newField: 'value' },
+await clerkClient.users.updateUserMetadata(userId, {
+  publicMetadata: { newField: 'value' },
 })
 ```
+This preserves other `publicMetadata` fields; a key set to `null` is removed.
+
+To replace a provided metadata field in full, use `replaceUserMetadata()`, which wraps `PUT /v1/users/{user_id}/metadata`:
+```typescript
+await clerkClient.users.replaceUserMetadata(userId, {
+  publicMetadata: { newField: 'value' },
+})
+```
+This removes existing keys omitted from the provided `publicMetadata` object. Top-level metadata fields omitted from the request are left unchanged.
 
 ---
 
@@ -314,7 +337,7 @@ Determine the active mode based on the user prompt in [Options context](#options
 
 ## Your Task
 
-Use the **LATEST VERSION** from [API specs context](#api-specs-context) by default. If the user specifies a different version (e.g. `--version 2024-10-01`), use that version instead.
+Use the **LATEST VERSION** from [API specs context](#api-specs-context) by default. If the user specifies a different version (e.g. `--version 2024-10-01`), use that version instead. Set `VERSION` to this active version before executing a Clerk Backend API request.
 
 Determine the active mode, then follow the applicable steps below.
 
@@ -412,7 +435,8 @@ curl -s https://raw.githubusercontent.com/clerk/openapi-specs/main/bapi/${versio
 **Example — list users and parse response:**
 ```bash
 RESPONSE=$(curl -s "https://api.clerk.com/v1/users?limit=10" \
-  -H "Authorization: Bearer $CLERK_SECRET_KEY")
+  -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -H "Clerk-API-Version: $VERSION")
 echo "$RESPONSE" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)

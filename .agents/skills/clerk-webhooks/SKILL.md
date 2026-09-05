@@ -36,12 +36,14 @@ Webhook routes must be excluded from Clerk middleware protection. Without this, 
 
 ```typescript
 // proxy.ts (Next.js <=15: middleware.ts)
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
-
-const isPublicRoute = createRouteMatcher(['/api/webhooks(.*)'])
+import { clerkMiddleware } from '@clerk/nextjs/server'
 
 export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) await auth.protect()
+  const pathname = req.nextUrl.pathname
+  const isWebhookRoute =
+    pathname === '/api/webhooks' || pathname.startsWith('/api/webhooks/')
+
+  if (!isWebhookRoute) await auth.protect()
 })
 ```
 
@@ -67,13 +69,18 @@ export async function POST(req: NextRequest) {
     const { id, email_addresses, first_name, last_name } = evt.data
     const email = email_addresses[0]?.email_address
     const name = `${first_name ?? ''} ${last_name ?? ''}`.trim()
-    await db.users.create({ data: { clerkId: id, email, name } })
+    await db.users.upsert({
+      where: { clerkId: id },
+      update: { email, name },
+      create: { clerkId: id, email, name },
+    })
   }
 
   if (evt.type === 'user.updated') {
     const { id, email_addresses, first_name, last_name } = evt.data
     const email = email_addresses[0]?.email_address
-    await db.users.update({ where: { clerkId: id }, data: { email, first_name, last_name } })
+    const name = `${first_name ?? ''} ${last_name ?? ''}`.trim()
+    await db.users.update({ where: { clerkId: id }, data: { email, name } })
   }
 
   if (evt.type === 'user.deleted') {
@@ -85,7 +92,11 @@ export async function POST(req: NextRequest) {
     const { organization, public_user_data, role } = evt.data
     const orgId = organization.id
     const userId = public_user_data.user_id
-    await db.teamMembers.create({ data: { orgId, userId, role } })
+    await db.teamMembers.upsert({
+      where: { orgId_userId: { orgId, userId } },
+      update: { role },
+      create: { orgId, userId, role },
+    })
   }
 
   if (evt.type === 'organizationMembership.deleted') {
@@ -99,17 +110,15 @@ export async function POST(req: NextRequest) {
 }
 ```
 
-## Full Example: Welcome Email (Resend) + Slack Notification on user.created
+## Full Example: Queue Welcome Email + Slack Notification on user.created
 
-Notification-only handlers still verify the signature. Same pattern as the database-sync handler:
+Notification-only handlers still verify the signature. Durably queue notification work before acknowledging the webhook so slow or failed providers cannot cause Svix retries to resend an email:
 
 ```typescript
 // app/api/webhooks/route.ts
 import { verifyWebhook } from '@clerk/nextjs/webhooks'
 import { NextRequest } from 'next/server'
-import { Resend } from 'resend'
-
-const resend = new Resend(process.env.RESEND_API_KEY)
+import { db } from '@/lib/db'
 
 export async function POST(req: NextRequest) {
   // Step 1: ALWAYS verify the webhook signature - NEVER skip this
@@ -123,41 +132,48 @@ export async function POST(req: NextRequest) {
 
   // Step 2: Listen for user.created event
   if (evt.type === 'user.created') {
+    const svixId = req.headers.get('svix-id')
+    if (!svixId) {
+      return new Response('Missing svix-id', { status: 400 })
+    }
+
     // Step 3: Extract user email and name from webhook payload
     const { id, email_addresses, first_name, last_name } = evt.data
     const email = email_addresses[0]?.email_address
     const name = `${first_name ?? ''} ${last_name ?? ''}`.trim()
 
-    // Step 4: Call Resend API to send welcome email
-    await resend.emails.send({
-      from: 'noreply@yourdomain.com',
-      to: email,
-      subject: 'Welcome!',
-      html: `<p>Hi ${name}, welcome to our app!</p>`,
-    })
-
-    // Step 5: Post notification to Slack channel
-    await fetch(process.env.SLACK_WEBHOOK_URL!, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: `New user signed up: ${name} (${email})`,
-      }),
+    // Step 4: Atomically enqueue once. notificationJobs.svixId must be unique.
+    // A separate worker sends both the Resend email and Slack notification.
+    await db.notificationJobs.upsert({
+      where: { svixId },
+      update: {},
+      create: {
+        svixId,
+        type: 'user.created.notifications',
+        status: 'pending',
+        payload: { clerkUserId: id, email, name },
+      },
     })
   }
 
-  // Always return 200 to acknowledge receipt
+  // Acknowledge only after the durable enqueue succeeds.
   return new Response('OK', { status: 200 })
 }
 ```
 
+The queue table must enforce a unique constraint on `svixId`. Process these rows outside the webhook request, and record completion for the email and Slack steps independently so a worker retry can resume unfinished work. If the enqueue fails, return a non-2xx response and let Svix retry; no external notification has been sent yet.
+
 **Also include proxy.ts (Next.js <=15: middleware.ts) to make the route public:**
 ```typescript
 // proxy.ts (Next.js <=15: middleware.ts)
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
-const isPublicRoute = createRouteMatcher(['/api/webhooks(.*)'])
+import { clerkMiddleware } from '@clerk/nextjs/server'
+
 export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) await auth.protect()
+  const pathname = req.nextUrl.pathname
+  const isWebhookRoute =
+    pathname === '/api/webhooks' || pathname.startsWith('/api/webhooks/')
+
+  if (!isWebhookRoute) await auth.protect()
 })
 ```
 
@@ -192,14 +208,11 @@ export async function POST(req: NextRequest) {
     const orgId = organization.id
     const userId = public_user_data.user_id
 
-    // Add to team_members table
-    await db.team_members.create({
-      data: { orgId, userId, role },
-    })
-
-    // Create workspace record for new member
-    await db.workspaces.create({
-      data: { orgId, userId, createdAt: new Date() },
+    // Upsert by Clerk identifiers so retries do not create duplicate memberships
+    await db.team_members.upsert({
+      where: { orgId_userId: { orgId, userId } },
+      update: { role },
+      create: { orgId, userId, role },
     })
   }
 
@@ -322,8 +335,8 @@ const {
 | Route not found (404) | Wrong path | Use `/api/webhooks` or preserve existing path |
 | Not authorized (401) | Route is protected by middleware | Make route public in `clerkMiddleware()` |
 | No data in DB | Async job pending | Wait/check logs |
-| Duplicate entries | Only handling `user.created` | Also handle `user.updated` |
-| Timeouts | Handler too slow | Queue async work, return 200 first |
+| Duplicate entries | Retried `*.created` deliveries use unconditional inserts | Add unique constraints and upsert by Clerk IDs, or atomically deduplicate with the unique `svix-id`; `user.updated` does not deduplicate repeated `user.created` deliveries |
+| Timeouts | Handler calls slow external services | Durably enqueue the work, then return 200 without calling providers inline |
 
 ## Testing & Deployment
 

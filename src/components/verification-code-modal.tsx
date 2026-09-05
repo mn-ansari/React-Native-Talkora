@@ -230,6 +230,7 @@ export function VerificationCodeModal({
             <TouchableOpacity
               activeOpacity={0.7}
               accessibilityRole="button"
+              accessibilityState={{ disabled: isResending }}
               disabled={isResending}
               onPress={handleResend}
               className="pt-[12px]"

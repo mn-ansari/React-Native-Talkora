@@ -30,8 +30,12 @@ export default function SSOCallbackScreen() {
     return <Redirect href="/" />;
   }
 
+  if (status === "cancelled") {
+    return <Redirect href="/sign-in" />;
+  }
+
   const callbackFailed =
-    status === "error" || status === "cancelled" || status === "idle" || hasTimedOut;
+    status === "error" || status === "idle" || hasTimedOut;
 
   const retry = () => {
     resetGoogleSSO();

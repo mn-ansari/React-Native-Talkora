@@ -4,13 +4,15 @@
     {
       "id": 1,
       "prompt": "every time a user signs up on our app i need to create a row in our users table in postgres (we use prisma). the table has id, email, name, clerkId, createdAt columns. can you set up the webhook handler? we're on next.js app router",
-      "expected_output": "Creates webhook route handler at app/api/webhooks/route.ts, verifies webhook signature, handles user.created event, inserts into Prisma users table",
+      "expected_output": "Creates webhook route handler at app/api/webhooks/route.ts, verifies webhook signature, handles user.created event, and inserts into the Prisma users table using idempotent writes. Requires retry-safe, idempotent writes for user, membership, and workspace records, plus durable event deduplication before any Resend email or Slack notification side effects.",
       "files": [],
       "assertions": [
         "Creates route handler at app/api/webhooks/route.ts or similar path",
         "Uses POST method handler (not GET)",
         "Uses verifyWebhook from @clerk/nextjs/webhooks for signature verification",
-        "Handles user.created event type and extracts email, name, id from payload",
+        "Handles user.created event type",
+        "Uses evt.data.id, evt.data.first_name, and evt.data.last_name from the user.created payload",
+        "Resolves the primary email from evt.data.email_addresses by matching evt.data.primary_email_address_id rather than assuming the first address is primary",
         "Inserts into database using Prisma with the correct column mapping (clerkId = evt.data.id)",
         "Mentions that webhook route must be excluded from Clerk middleware (public route)"
       ]
@@ -22,7 +24,8 @@
       "files": [],
       "assertions": [
         "Listens for user.created webhook event",
-        "Extracts user email and name from webhook payload",
+        "Uses evt.data.id, evt.data.first_name, and evt.data.last_name from the user.created payload",
+        "Resolves the primary email from evt.data.email_addresses by matching evt.data.primary_email_address_id rather than assuming the first address is primary",
         "Calls Resend API to send welcome email",
         "Posts notification to Slack channel",
         "Includes webhook signature verification",
@@ -40,7 +43,7 @@
         "Uses verifyWebhook from @clerk/express/webhooks (not raw svix Webhook class)",
         "Preserves the existing route path /webhooks/clerk",
         "Mentions CLERK_WEBHOOK_SIGNING_SECRET environment variable (not legacy CLERK_WEBHOOK_SECRET)",
-        "Returns 200 status on success (not just res.json)"
+        "Returns an HTTP response with status 200 on success"
       ]
     },
     {

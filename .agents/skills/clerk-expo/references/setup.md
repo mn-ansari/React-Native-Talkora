@@ -21,7 +21,7 @@ npx expo install expo-dev-client
 | Feature | Install |
 |---------|---------|
 | Browser SSO/OAuth (`useSSO`) | `npx expo install expo-auth-session expo-web-browser` |
-| Native Google sign-in | `npx expo install expo-crypto` |
+| Native Google sign-in | `npx expo install @clerk/expo-google-signin expo-crypto` |
 | Native Apple sign-in | `npx expo install expo-apple-authentication` |
 | Biometrics (`useLocalCredentials`) | `npx expo install expo-local-authentication` |
 | Passkeys | `npx expo install @clerk/expo-passkeys` |

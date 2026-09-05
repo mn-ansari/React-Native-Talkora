@@ -17,7 +17,7 @@ license: MIT
 
 The `clerk` binary is a pre-authenticated gateway to Clerk's Backend API and Platform API, plus project-level tooling (auth, linking, env pulls, instance config). When the user asks anything that touches a Clerk resource, reach for `clerk` first instead of hand-rolling `curl`.
 
-> This skill targets clerk `latest`. If `clerk --version` disagrees with the latest available CLI, refresh it with `clerk update`, or invoke the latest through a package runner such as `bunx clerk@latest`. The binary is always the source of truth, so run `clerk <command> --help` to verify anything this skill claims.
+> This skill targets Clerk CLI `3.2.0`. Verify a global binary with `clerk --version`; if it does not report `3.2.0`, invoke the reviewed version through a package runner such as `bunx clerk@3.2.0`. The binary is always the source of truth, so run `clerk <command> --help` to verify anything this skill claims.
 
 ## Execution environment (prefer the host, understand the sandbox warning)
 
@@ -71,31 +71,33 @@ Before running any `clerk` command, figure out which binary to invoke and bind t
 command -v clerk >/dev/null 2>&1 && clerk --version
 ```
 
-If that prints `latest` or any version you trust, use bare `clerk` for the rest of the session.
+If that prints `3.2.0`, use bare `clerk` for the rest of the session.
 
 Otherwise fall back to a package runner, in this order (matches the CLI's own `preferredRunner` logic, which prefers the runner that matches the project's lockfile):
 
 | Project package manager   | Invocation                       |
 | ------------------------- | -------------------------------- |
-| bun (`bun.lock*`)         | `bunx clerk@latest`     |
-| npm (`package-lock.json`) | `npx -y clerk@latest`   |
-| pnpm (`pnpm-lock.yaml`)   | `pnpm dlx clerk@latest` |
-| yarn >= 2 (`yarn.lock`)   | `yarn dlx clerk@latest` |
+| bun (`bun.lock*`)         | `bunx clerk@3.2.0`     |
+| npm (`package-lock.json`) | `npx -y clerk@3.2.0`   |
+| pnpm (`pnpm-lock.yaml`)   | `pnpm dlx clerk@3.2.0` |
+| yarn >= 2 (`yarn.lock`)   | `yarn dlx clerk@3.2.0` |
 
 Yarn Classic (v1) has no `dlx`; treat those projects as "no preferred runner" and fall back to the first runner from the list above that's on PATH.
 
-The published npm package is **`clerk`**, not `@clerk/cli`. Never teach `npm install -g clerk` as the primary path. If the global CLI is stale or behaves differently from this skill, either upgrade the global install or fall back to the `latest` runner form above.
+The published npm package is **`clerk`**, not `@clerk/cli`. Never teach `npm install -g clerk` as the primary path. If the global CLI is stale or behaves differently from this skill, fall back to the pinned `3.2.0` runner form above. Change the pinned version only after reviewing a new Clerk CLI release, and update every invocation in this section together.
 
-## Prerequisites (run at session start)
+## Prerequisites for authenticated or linked commands
 
-Before running any other Clerk command in a session, verify the CLI is authenticated, linked, and healthy:
+Before the first Clerk command in a session that depends on existing authentication or project linkage, verify the CLI is authenticated, linked, and healthy:
 
 ```sh
 clerk --version               # confirm the binary is on PATH
 clerk doctor --json           # structured health check; exit 1 if anything failed
 ```
 
-**Always run `clerk doctor --json` first.** It catches the common setup failures (not logged in, project not linked, missing keys, stale CLI version) up front, so later commands don't fail with confusing errors. In agent mode it also includes a `Host execution` check that warns when Clerk's host-side config / credential directories are not writable, which is the canonical signal that the current invocation is likely sandboxed.
+`clerk init` and `clerk auth login` are bootstrap exceptions because neither requires existing authentication or project linkage. Do not run these prerequisites before either command.
+
+**Always run `clerk doctor --json` before commands that depend on existing authentication or project linkage.** It catches the common setup failures (not logged in, project not linked, missing keys, stale CLI version) up front, so later commands don't fail with confusing errors. In agent mode it also includes a `Host execution` check that warns when Clerk's host-side config / credential directories are not writable, which is the canonical signal that the current invocation is likely sandboxed.
 
 Each result has `name`, `status` (`pass`/`warn`/`fail`), `message`, optional `detail`, optional `remedy` (how to fix it), and optional `fix` (label for auto-fixable issues). Parse that and act on it, or surface it to the user. If `Host execution` warns, rerun the command on the host before trusting any auth/link/env/API failures from the same sandboxed run. Rerun `clerk doctor --json` whenever a later command starts misbehaving.
 
@@ -187,24 +189,28 @@ See [references/recipes.md](references/recipes.md) for concrete patterns: listin
 `users list`, `apps list`, `config pull`, and most `clerk api` GETs return payloads that can be many kilobytes or megabytes. Production tenants commonly have thousands of users; an instance config can be hundreds of fields deep. Reading those responses into the conversation costs context window for no benefit. Save the response to a file first, then query just what you need with `jq`:
 
 ```sh
-# 1. Persist the response. Use --limit 250 to maximize page size for users list.
-clerk users list --json --limit 250 > /tmp/users.json
-clerk apps list --json                > /tmp/apps.json
-clerk api /users/user_abc123          > /tmp/user.json
+# 1. Persist responses in a private temporary directory.
+clerk_data_dir="$(mktemp -d)"
+trap 'rm -rf -- "$clerk_data_dir"' EXIT
+chmod 700 "$clerk_data_dir"
+
+clerk users list --json --limit 250 > "$clerk_data_dir/users.json"
+clerk apps list --json                > "$clerk_data_dir/apps.json"
+clerk api /users/user_abc123          > "$clerk_data_dir/user.json"
 
 # 2. Inspect only what you need.
-jq '.data | length'                       /tmp/users.json   # current page size
-jq '.hasMore'                             /tmp/users.json   # are more pages available?
-jq '.data[0] | keys'                      /tmp/users.json   # discover the user shape once
-jq '.data[] | {id, email_addresses}'      /tmp/users.json   # project to a few fields
-jq '[.data[] | select(.banned)] | length' /tmp/users.json   # aggregate without reading rows
+jq '.data | length'                       "$clerk_data_dir/users.json" # current page size
+jq '.hasMore'                             "$clerk_data_dir/users.json" # are more pages available?
+jq '.data[0] | keys'                      "$clerk_data_dir/users.json" # discover the user shape once
+jq '.data[] | {id}'                       "$clerk_data_dir/users.json" # include email addresses only when explicitly required
+jq '[.data[] | select(.banned)] | length' "$clerk_data_dir/users.json" # aggregate without reading rows
 ```
 
 **If `jq` is not available**, fall back to Python or Node - both can stream the file without printing it whole:
 
 ```sh
-python3 -c 'import json; d=json.load(open("/tmp/users.json")); print(len(d["data"]), d["hasMore"])'
-node -e 'const d=require("/tmp/users.json"); console.log(d.data.length, d.hasMore)'
+python3 -c 'import json, sys; d=json.load(open(sys.argv[1])); print(len(d["data"]), d["hasMore"])' "$clerk_data_dir/users.json"
+node -e 'const d=require(process.argv[1]); console.log(d.data.length, d.hasMore)' "$clerk_data_dir/users.json"
 ```
 
 `cat` / `head` the file only when you genuinely need to see the raw structure for one-off debugging. When walking pages, write each page to its own file (e.g. `page-${offset}.json`) so individual pages stay independently inspectable.

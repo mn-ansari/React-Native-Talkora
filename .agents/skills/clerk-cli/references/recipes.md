@@ -33,21 +33,33 @@ clerk users list --email-address alice@example.com
 clerk users open user_abc123
 clerk users open user_abc123 --print     # print the URL instead of opening
 
-# Create a user (preferred; curated flags)
-clerk users create \
-  --email alice@example.com \
-  --password 'SuperSecret123!' \
-  --first-name Alice \
-  --last-name Doe \
-  --yes
+# Create a user in the development instance (preferred; curated fields).
+# getpass keeps the password out of shell history and disables terminal echo;
+# the pipe sends it over stdin instead of process arguments or terminal output.
+python3 - <<'PY' | clerk users create --instance dev --input-json -
+import getpass
+import json
 
-# Equivalent raw BAPI call. Use only when curated flags don't cover a field.
-clerk api /users -d '{
-  "email_address": ["alice@example.com"],
-  "password": "SuperSecret123!",
-  "first_name": "Alice",
-  "last_name": "Doe"
-}'
+print(json.dumps({
+    "email": "alice@example.com",
+    "password": getpass.getpass("Development user password: "),
+    "firstName": "Alice",
+    "lastName": "Doe",
+}))
+PY
+
+# Equivalent raw BAPI call. Use only when curated fields don't cover a field.
+python3 - <<'PY' | clerk api /users --instance dev --yes
+import getpass
+import json
+
+print(json.dumps({
+    "email_address": ["alice@example.com"],
+    "password": getpass.getpass("Development user password: "),
+    "first_name": "Alice",
+    "last_name": "Doe",
+}))
+PY
 
 # Update (PATCH merges)
 clerk api /users/user_abc123 -X PATCH -d '{"first_name":"Alicia"}'
@@ -67,29 +79,39 @@ clerk api /users/user_abc123 -X DELETE --yes
 
 ### Test users (development only)
 
-For test accounts you need to sign into without real email or SMS delivery, Clerk provides two magic patterns that both verify with the fixed OTP `424242`. Use them on development instances; production rejects them.
+For test accounts you need to sign into without real email or SMS delivery, Clerk provides two magic patterns that both verify with the fixed OTP `424242`. These commands must stay pinned to `--instance dev`; never use test credentials against another instance.
 
 **By email.** Any address with the `+clerk_test` subaddress is recognized as a test email. The domain portion is arbitrary.
 
 ```sh
-# Create a test user with a test email (dev instance)
-# `skip_password_checks` isn't a curated flag, so pass the body via `-d`.
-clerk users create -d '{
-  "email_address": ["demo+clerk_test@example.com"],
-  "password": "TestPass123!",
-  "skip_password_checks": true
-}' --yes
+# Create a test user with a test email, explicitly on the dev instance.
+# Send the raw body over stdin because `skip_password_checks` isn't curated.
+python3 - <<'PY' | clerk api /users --instance dev
+import getpass
+import json
+
+print(json.dumps({
+    "email_address": ["demo+clerk_test@example.com"],
+    "password": getpass.getpass("Development test-user password: "),
+    "skip_password_checks": True,
+}))
+PY
 ```
 
 **By phone.** Any US fictional phone number in the `+1 (XXX) 555-0100` through `+1 (XXX) 555-0199` range is recognized as a test phone. Pass the E.164 form.
 
 ```sh
-# Create a test user with a test phone (dev instance)
-clerk users create -d '{
-  "phone_number": ["+12015550100"],
-  "password": "TestPass123!",
-  "skip_password_checks": true
-}' --yes
+# Create a test user with a test phone, explicitly on the dev instance.
+python3 - <<'PY' | clerk api /users --instance dev
+import getpass
+import json
+
+print(json.dumps({
+    "phone_number": ["+12015550100"],
+    "password": getpass.getpass("Development test-user password: "),
+    "skip_password_checks": True,
+}))
+PY
 ```
 
 When signing in as either user in a browser or Playwright, enter `424242` at the OTP prompt.
@@ -269,20 +291,24 @@ clerk api /v1/platform/applications/app_abc123 --platform
 `users list`, `apps list`, `config pull`, and most `clerk api` GETs can return responses ranging from kilobytes to megabytes. Reading the full payload into an LLM-driven session burns context for no benefit. Persist the response, then query just the slice you need:
 
 ```sh
-# Persist once, query as many times as you need.
-clerk users list --json --limit 250 > /tmp/users.json
+# Persist once in a private directory, then query as many times as you need.
+clerk_data_dir="$(mktemp -d)"
+trap 'rm -rf -- "$clerk_data_dir"' EXIT
+chmod 700 "$clerk_data_dir"
 
-jq '.data | length'                   /tmp/users.json   # count rows on the page
-jq '.hasMore'                         /tmp/users.json   # any more pages?
-jq '.data[0] | keys'                  /tmp/users.json   # learn the shape of one record
-jq '.data[] | {id, email_addresses}'  /tmp/users.json   # project to relevant fields only
+clerk users list --json --limit 250 > "$clerk_data_dir/users.json"
+
+jq '.data | length'  "$clerk_data_dir/users.json" # count rows on the page
+jq '.hasMore'        "$clerk_data_dir/users.json" # any more pages?
+jq '.data[0] | keys' "$clerk_data_dir/users.json" # learn the shape of one record
+jq '.data[] | {id}'  "$clerk_data_dir/users.json" # include email addresses only when explicitly required
 ```
 
 If `jq` is not on `PATH`, fall back to Python or Node, which most environments have:
 
 ```sh
-python3 -c 'import json; d=json.load(open("/tmp/users.json")); print(len(d["data"]), d["hasMore"])'
-node    -e 'const d=require("/tmp/users.json"); console.log(d.data.length, d.hasMore)'
+python3 -c 'import json, sys; d=json.load(open(sys.argv[1])); print(len(d["data"]), d["hasMore"])' "$clerk_data_dir/users.json"
+node    -e 'const d=require(process.argv[1]); console.log(d.data.length, d.hasMore)' "$clerk_data_dir/users.json"
 ```
 
 Only `cat`/`head` the file when you genuinely need the raw structure for one-off debugging.
@@ -314,17 +340,27 @@ done
 
 ```sh
 echo '{"first_name":"Bob"}' | clerk api /users/user_abc123 -X PATCH
-jq -n '{email_address:["c@d.co"]}' | clerk api /users
+jq -n '{email_address:["c@d.co"]}' | clerk api /users --instance dev
 ```
 
 ### Loop safely
 
 ```sh
-# Always --dry-run first across the whole set. `users list` paginates;
-# bump --limit (max 250) and walk pages with --offset until .hasMore is false.
-for id in $(clerk users list --json --limit 250 | jq -r '.data[] | .id'); do
-  clerk api /users/$id -X PATCH -d '{"public_metadata":{"migrated":true}}' --dry-run
+# Always --dry-run first across the whole set. Collect every page before patching.
+user_ids="$(mktemp)"
+trap 'rm -f -- "$user_ids"' EXIT
+
+offset=0
+while :; do
+  page="$(clerk users list --json --limit 250 --offset "$offset")"
+  printf '%s' "$page" | jq -r '.data[] | .id' >> "$user_ids"
+  [ "$(printf '%s' "$page" | jq -r '.hasMore')" = "true" ] || break
+  offset=$((offset + 250))
 done
+
+while IFS= read -r id; do
+  clerk api /users/$id -X PATCH -d '{"public_metadata":{"migrated":true}}' --dry-run
+done < "$user_ids"
 # Re-run without --dry-run once the previews look right
 ```
 

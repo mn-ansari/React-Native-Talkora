@@ -1,6 +1,6 @@
 # Framework-Specific Webhook Handlers
 
-Each Clerk SDK package ships its own `verifyWebhook` adapter that reads the framework's native request type and uses `CLERK_WEBHOOK_SIGNING_SECRET` automatically. Use the framework-specific import; do not roll your own with raw `svix`.
+Each Clerk SDK package ships its own `verifyWebhook` adapter that reads the framework's native request type. Most adapters use `CLERK_WEBHOOK_SIGNING_SECRET` automatically; Nuxt's `@clerk/nuxt/webhooks` uses `NUXT_CLERK_WEBHOOK_SIGNING_SECRET`, while Astro's adapter must receive `signingSecret: import.meta.env.CLERK_WEBHOOK_SIGNING_SECRET`. Use the framework-specific import; do not roll your own with raw `svix`.
 
 Same `WebhookEvent` payload shape across all frameworks. See SKILL.md for payload field reference and the full event catalog.
 
@@ -19,9 +19,8 @@ app.post('/api/webhooks', express.raw({ type: 'application/json' }), async (req,
     const evt = await verifyWebhook(req)
 
     if (evt.type === 'user.created') {
-      const { id, email_addresses, first_name, last_name } = evt.data
-      const email = email_addresses[0]?.email_address
-      console.log(`New user: ${first_name} ${last_name} (${email})`)
+      const { id } = evt.data
+      console.log(`New user: ${id}`)
     }
 
     return res.send('Webhook received')
@@ -46,9 +45,8 @@ export const POST: APIRoute = async ({ request }) => {
     })
 
     if (evt.type === 'user.created') {
-      const { id, email_addresses } = evt.data
-      const email = email_addresses[0]?.email_address
-      console.log(`New user: ${id} (${email})`)
+      const { id } = evt.data
+      console.log(`New user: ${id}`)
     }
 
     return new Response('Webhook received', { status: 200 })
@@ -148,7 +146,7 @@ export const action = async ({ request }: Route.ActionArgs) => {
 }
 ```
 
-Register the route in `router.ts`:
+Register the webhook route alongside the existing index route in the framework-required `app/routes.ts` file:
 
 ```typescript
 import { type RouteConfig, route, index } from '@react-router/dev/routes'
@@ -210,7 +208,7 @@ export default defineConfig({
 ## Common Patterns Across Frameworks
 
 - All `verifyWebhook` adapters return the same `WebhookEvent` discriminated union, so handler logic (`if (evt.type === ...)`) is identical.
-- All adapters read `CLERK_WEBHOOK_SIGNING_SECRET` automatically except Astro (pass `signingSecret` option).
-- All adapters require a public webhook route, exclude `/api/webhooks(.*)` from middleware protection.
+- Most adapters read `CLERK_WEBHOOK_SIGNING_SECRET` automatically. Nuxt's `@clerk/nuxt/webhooks` reads `NUXT_CLERK_WEBHOOK_SIGNING_SECRET`; Astro requires the `signingSecret` option set to `import.meta.env.CLERK_WEBHOOK_SIGNING_SECRET`.
+- All adapters require a public webhook route; each application must exclude its configured webhook path from middleware protection (for example, `/webhooks/clerk`).
 - Vite-based frameworks (Nuxt, React Router, TanStack Start) need `allowedHosts` configured when tunneling localhost via ngrok in development.
 - Express specifically needs `express.raw({ type: 'application/json' })` for the webhook route, raw body bytes are required for signature verification.

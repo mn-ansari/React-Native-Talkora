@@ -4,15 +4,16 @@
     {
       "id": 1,
       "prompt": "i need to get all users who signed up in the last 7 days from clerk's backend API. show me how",
-      "expected_output": "REST API call to GET /v1/users with date filter, Bearer token auth using CLERK_SECRET_KEY, response parsing and pagination handling",
+      "expected_output": "REST API call to GET /v1/users with created_at_after set to a Unix timestamp in milliseconds, Bearer token auth using CLERK_SECRET_KEY, response parsing, and complete limit-plus-offset pagination",
       "scaffold": "nextjs-basic-auth",
       "files": [],
       "expectations": [
         "Uses GET /v1/users endpoint",
-        "Includes a created_at or date-based filter query parameter to narrow to last 7 days",
+        "Includes the created_at_after query parameter set to the Unix timestamp in milliseconds for 7 days ago",
         "Sets CLERK_SECRET_KEY as Bearer token in the Authorization header",
         "Parses the JSON response array of user objects",
-        "Handles or mentions pagination via limit and offset parameters"
+        "Processes all pages with limit and offset, advancing offset by limit until a page returns fewer results than the limit",
+        "Does not require or depend on cursor-based pagination"
       ]
     },
     {
@@ -26,21 +27,25 @@
         "Uses POST /v1/organizations/{id}/invitations to send the invitation",
         "Sets the role to admin (or org:admin) in the invitation payload",
         "Authenticates both API calls using CLERK_SECRET_KEY in the Authorization header",
-        "Extracts the organization ID from the first response and uses it in the invitation request"
+        "Extracts the organization ID from the first response and uses it in the invitation request",
+        "Requires explicit user confirmation before performing either write operation",
+        "Inspects CLERK_BAPI_SCOPES before making the API calls to verify the required write permissions"
       ]
     },
     {
       "id": 3,
       "prompt": "i need to set custom metadata on a user via clerk's backend api. set their plan to 'pro' and onboarded to true",
-      "expected_output": "PATCH /v1/users/{user_id} with public_metadata or private_metadata body, explanation of metadata types and when to use each",
+      "expected_output": "PATCH /v1/users/{user_id}/metadata with a public_metadata or private_metadata body, explanation of metadata types and deep-merge behavior",
       "scaffold": "nextjs-basic-auth",
       "files": [],
       "expectations": [
-        "Uses PATCH /v1/users/{user_id} endpoint",
+        "Uses PATCH /v1/users/{user_id}/metadata endpoint",
         "Sets the metadata in the correct field: public_metadata, private_metadata, or unsafe_metadata",
         "Explains the difference between metadata types (client-readable vs server-only vs client-writable)",
         "Includes a properly formed JSON body with the plan and onboarded fields",
-        "Mentions checking write permissions before executing the update"
+        "Mentions checking write permissions before executing the update",
+        "Requires explicit user confirmation before performing the write operation",
+        "Inspects CLERK_BAPI_SCOPES before making the API call to verify the required write permission"
       ]
     },
     {
@@ -60,14 +65,14 @@
     {
       "id": 5,
       "prompt": "i'm updating user metadata to add a 'plan' field but it keeps deleting the existing 'role' field. what am i doing wrong?",
-      "expected_output": "Metadata updates overwrite not merge. Read existing metadata first, spread it, then write back.",
+      "expected_output": "Use updateUserMetadata or PATCH /v1/users/{user_id}/metadata to deep-merge the plan field without deleting the existing role; use replaceUserMetadata or PUT only for intentional replacement.",
       "scaffold": "nextjs-basic-auth",
       "expectations": [
-        "Explains that updateUser publicMetadata replaces all existing metadata, not merges",
-        "Shows reading the existing user first with getUser(userId)",
-        "Spreads existing metadata before adding new fields ({ ...user.publicMetadata, plan: 'pro' })",
-        "Calls updateUser with the merged metadata object",
-        "Warns that this applies to publicMetadata, privateMetadata, and unsafeMetadata equally"
+        "Explains that updateUserMetadata deep-merges metadata and preserves existing fields",
+        "Uses updateUserMetadata or PATCH /v1/users/{user_id}/metadata for the partial update",
+        "Adds the plan field directly without requiring getUser or manually spreading existing metadata",
+        "Uses replaceUserMetadata or PUT /v1/users/{user_id}/metadata only for intentional full-field replacement",
+        "Explains that deep-merge and replacement semantics apply to publicMetadata, privateMetadata, and unsafeMetadata"
       ]
     },
     {
